@@ -1,13 +1,15 @@
 ---
-title: Partition by generated columns
+title: Use generated partition columns to bin data
 description: This post explains how to create and change partitioned Delta tables making use of *generated* partition columns (especially for `TimestampType` partition columns)
-thumbnail: ./xxx.png
-author:  [Martin Bode](https://www.linkedin.com/in/martin-bode)
-date: 2024-04-xx
+thumbnail: ./`TODO`.png
+author:  [Martin Bode](https://www.linkedin.com/in/martin-bode) `TODO`
+date: 2024-04-`TODO`
 ---
-> # TODOs
-> - Upload Jupyter notebook to GIT
+> # `TODO`
+> - upload Jupyter notebook to GIT
+> - create thumbnail
 > - review by Delta experts
+> - add me to "author" list
 
 [1]: https://delta.io/blog/pros-cons-hive-style-partionining/#:~:text=Hive%2Dstyle%20partitioning%20for%20data%20lakes
 [2]: https://delta.io/blog/pros-cons-hive-style-partionining/#:~:text=Hive%2Dstyle%20partitioning%20for%20concurrency
@@ -153,10 +155,11 @@ Note `PartitionFilters`
 
 
 # 🔀 Partition evolution: change binning granularity of partition columns
-Estimating the *correct* partition granularity upfront is very difficult. Therefore, ending up in the situation where the table is either over-partitioned (many partitions containing only little data) or under-partitioning (few partitions containing large data) is rather common.
+Estimating the *correct* partition granularity upfront is very difficult. The rule of thumb is that there should be [at leasy 1 GB of data in each partition][4].
+Therefore, ending up in the situation where the table is either over-partitioned (many partitions containing only little data) or under-partitioning (few partitions containing large data) is rather common.
 To **change the granularity** of the partition afterwards is easy with Delta but comes at the cost of **rewriting the whole table**.
 
-In this example, the read the Delta table previously binned by year, transform the `DataFrame` and simply overwrite the Delta table in-place. Due to Delta's versioning / time travel functionality, this will create a new version of the table with the changed generation expression. So there is no need to create a temporary table and swap it afterwards.
+In this example, the Delta table (previously binned by *year*) is read; the corresponding `DataFrame` is transformend (so that the partition values are binned by *month*) and used to simply overwrite the Delta table in-place. Due to Delta's versioning / time travel functionality, this will create a new version of the table with the changed generation expression. So there is no need to create a temporary table and swap it afterwards.
 ```python
 spark.table("events")
 

@@ -1,0 +1,120 @@
+---
+title: Partition evolution with hive-style partition and generation expression
+description: This post explains how to change the partition granulartity for generated partition columnd (esspecially for `DateType` and `TimeStamp` partition columns)
+thumbnail: ./xxx.png
+author:  [Martin Bode](https://www.linkedin.com/in/martin-bode)
+date: 2023-10-22
+---
+
+
+# Setup
+<details>
+  <summary>Click me</summary>
+  
+  ```python
+  from pyspark.sql import functions as F
+  from pyspark.sql import types as T
+
+  schema = T.StructType([
+      T.StructField('event_id', T.LongType()),
+      T.StructField('event_timestamp', T.TimestampType()),
+      T.StructField('event_payload', T.StringType()),
+  ])
+  
+  data = [
+      (            1, datetime.fromisoformat("1990-06-15 09:01:01"), "Australia"),
+      (            2, datetime.fromisoformat("1990-06-15 09:01:02"), "Botswana"),
+      (    1_000_000, datetime.fromisoformat("1990-12-31 12:34:56"), "Costa Rica"),
+      (1_000_000_000, datetime.fromisoformat("2000-01-10 12:34:56"), "Denmark"),
+  ]
+  
+  df = spark.createDataFrame(data, schema)
+  ```
+</details>
+
+# Non-binned TimeStamp partition
+```python
+(
+    df
+    .coalesce(1) # only for demonstration purpose, so per partition one file is written
+    .write
+    .format("delta")
+    .mode("overwrite")
+    .partitionBy("event_timestamp")
+    .saveAsTable("events")
+)
+```
+
+```
+events
+├── _delta_log/
+│   └── 00000000000000000000.json
+├── event_timestamp=1990-06-15 09:01:01/
+│   └── part-00001-77330743-946f-4f6a-830e-37a575d5234f.c000.snappy.parquet (1 rows)
+├── event_timestamp=1990-06-15 09:01:02/
+│   └── part-00003-d4e51376-087d-45fb-b472-d392c3991dab.c000.snappy.parquet (1 rows)
+├── event_timestamp=1990-12-31 12:34:56/
+│   └── part-00005-0ca14c69-bdcb-4233-b075-da74bc8b0f97.c000.snappy.parquet (1 rows)
+├── event_timestamp=2000-01-10 12:34:56/
+    └── part-00007-66f59e03-5c5c-4b7f-923b-3059f928e06f.c000.snappy.parquet (1 rows)
+```
+
+# binned partitioning (generation expression)
+
+```python
+generation_expression = "DATE_TRUNC('YEAR', event_timestamp)"
+(
+    df
+    .withColumn("event_timestamp_bin", F.expr(generation_expression))
+    .withMetadata("event_timestamp_bin", {"delta.generationExpression": generation_expression})
+    .coalesce(1) # only for demonstration purpose, so per partition one file is written  
+    .write
+    .format("delta")
+    .mode("overwrite")
+    .partitionBy("event_timestamp_bin")
+    .saveAsTable("events")
+)
+```
+
+```
+events
+├── _delta_log/
+│   └── 00000000000000000000.json
+├── event_timestamp_bin=1990-01-01 00:00:00/
+│   └── part-00000-0ba92f13-29ee-410b-8943-298fa8e86f4e.c000.snappy.parquet (3 rows)
+├── event_timestamp_bin=2000-01-01 00:00:00/
+│   └── part-00000-57b8e78f-a752-4285-8cab-25be3aa632f4.c000.snappy.parquet (1 rows)
+```
+
+# Partition evolution: change partition scheme / partition granularity
+```python
+spark.table("events")
+
+new_generation_expression = "DATE_TRUNC('MONTH', event_timestamp)"
+(
+    spark.table("events")
+    .withColumn("event_timestamp_bin", F.expr(new_generation_expression))
+    .withMetadata("event_timestamp_bin", {"delta.generationExpression": new_generation_expression})
+    .coalesce(1) # only for demonstration purpose, so per partition one file is written
+    .write
+    .format("delta")
+    .mode("overwrite")
+    .option("overwriteSchema", "True")
+    .partitionBy("event_timestamp_bin")
+    .saveAsTable("events")
+)
+```
+
+```
+events
+├── _delta_log/
+│   └── 00000000000000000000.json
+│   └── 00000000000000000001.json
+├── event_timestamp_bin=1990-01-01 00:00:00/
+├── event_timestamp_bin=1990-06-01 00:00:00/
+│   └── part-00000-cc206daa-ed02-4277-a340-e73b103f1cb3.c000.snappy.parquet (2 rows)
+├── event_timestamp_bin=1990-12-01 00:00:00/
+│   └── part-00000-886aa276-3211-4c45-8a5a-6d138809b39b.c000.snappy.parquet (1 rows)
+├── event_timestamp_bin=2000-01-01 00:00:00/
+│   └── part-00000-70d65a32-e9cd-4503-8822-3fe1a7e36586.c000.snappy.parquet (1 rows)
+```

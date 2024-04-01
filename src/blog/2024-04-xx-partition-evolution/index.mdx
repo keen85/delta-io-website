@@ -1,38 +1,45 @@
 ---
 title: Partition evolution with hive-style partition and generation expression
-description: This post explains how to change the partition granulartity for generated partition columnd (esspecially for `DateType` and `TimeStamp` partition columns)
+description: This post explains how to change the partition granulartity for Delta tables making use of *generated* partition columns (esspecially for `DateType` and `TimestampType` partition columns)
 thumbnail: ./xxx.png
 author:  [Martin Bode](https://www.linkedin.com/in/martin-bode)
 date: 2023-10-22
 ---
 
+When working with large amouts of data (multiple GBs) physical partitioning of data can be beneficial:
+- faster reads (due to partition pruning)
+- isolation for updates, deletes
+
+Dangers:
+- over-partition (large number of small files)
 
 # Setup
 <details>
   <summary>Click me</summary>
-  
-  ```python
-  from pyspark.sql import functions as F
-  from pyspark.sql import types as T
-
-  schema = T.StructType([
-      T.StructField('event_id', T.LongType()),
-      T.StructField('event_timestamp', T.TimestampType()),
-      T.StructField('event_payload', T.StringType()),
-  ])
-  
-  data = [
-      (            1, datetime.fromisoformat("1990-06-15 09:01:01"), "Australia"),
-      (            2, datetime.fromisoformat("1990-06-15 09:01:02"), "Botswana"),
-      (    1_000_000, datetime.fromisoformat("1990-12-31 12:34:56"), "Costa Rica"),
-      (1_000_000_000, datetime.fromisoformat("2000-01-10 12:34:56"), "Denmark"),
-  ]
-  
-  df = spark.createDataFrame(data, schema)
-  ```
+  TODO
 </details>
 
-# Non-binned TimeStamp partition
+# 🛑 anti-pattern: partition by non-binned TimeStamp column
+```python
+from pyspark.sql import functions as F
+from pyspark.sql import types as T
+
+schema = T.StructType([
+    T.StructField('event_id', T.LongType()),
+    T.StructField('event_timestamp', T.TimestampType()),
+    T.StructField('event_payload', T.StringType()),
+])
+
+data = [
+    (            1, datetime.fromisoformat("1990-06-15 09:01:01"), "Australia"),
+    (            2, datetime.fromisoformat("1990-06-15 09:01:02"), "Botswana"),
+    (    1_000_000, datetime.fromisoformat("1990-12-31 12:34:56"), "Costa Rica"),
+    (1_000_000_000, datetime.fromisoformat("2000-01-10 12:34:56"), "Denmark"),
+]
+
+df = spark.createDataFrame(data, schema)
+```
+
 ```python
 (
     df
@@ -59,14 +66,14 @@ events
     └── part-00007-66f59e03-5c5c-4b7f-923b-3059f928e06f.c000.snappy.parquet (1 rows)
 ```
 
-# binned partitioning (generation expression)
+# ✅ partition by *binned* TimeStamp column (using generation expression)
 
 ```python
 generation_expression = "DATE_TRUNC('YEAR', event_timestamp)"
 (
     df
-    .withColumn("event_timestamp_bin", F.expr(generation_expression))
-    .withMetadata("event_timestamp_bin", {"delta.generationExpression": generation_expression})
+    .withColumn("event_timestamp_bin", F.expr(generation_expression)) # generated a new column that contains the desired timestamp granularity
+    .withMetadata("event_timestamp_bin", {"delta.generationExpression": generation_expression}) # this will tell Delta that this is a generated column
     .coalesce(1) # only for demonstration purpose, so per partition one file is written  
     .write
     .format("delta")
@@ -86,7 +93,10 @@ events
 │   └── part-00000-57b8e78f-a752-4285-8cab-25be3aa632f4.c000.snappy.parquet (1 rows)
 ```
 
-# Partition evolution: change partition scheme / partition granularity
+# Partition evolution: change granularity of the binning
+Estimating the *correct* partition granularity upfront is very hard. Therefore, ending up in the situation where the table is either over-partitioned (many partition containing only little data) or under-partitioning (few partitions containing large data) is very common.
+To change the granularity of the partiton afterwards is possible but comes at the cost of rewriting the whole table.
+
 ```python
 spark.table("events")
 
@@ -118,3 +128,6 @@ events
 ├── event_timestamp_bin=2000-01-01 00:00:00/
 │   └── part-00000-70d65a32-e9cd-4503-8822-3fe1a7e36586.c000.snappy.parquet (1 rows)
 ```
+
+# Parting thoughts
+Liquid Clustering to the rescue
